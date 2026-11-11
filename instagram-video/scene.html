@@ -1,0 +1,431 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Shopping Payback Reel</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+// ---------------------------------------------------------------
+// Editable copy - change these lines to re-brand the reel.
+// ---------------------------------------------------------------
+const CONFIG = {
+  hook:      "POV: she found THE bag 👀",
+  please:    "pleaseee 🥺",
+  sigh:      "*deep sigh* 😮‍💨",
+  tap:       "💳 *tap*",
+  makeup:    "+ the makeup 💄",
+  shoes:     "+ the shoes 👠",
+  bank:      "his bank account: 📉",
+  her:       "her: ✨ so happy ✨",
+  night1:    "later that night...",
+  night2:    "...she paid him back 😘",
+  ctaTop:    "Comment",
+  ctaWord:   "PAID",
+  ctaSub:    "to get paid for your content 👇",
+  prices:    [4200, 185, 650],
+  stores:    ["LUXE", "ÉCLAT", "MAISON"],
+};
+
+const c = document.getElementById('c'), ctx = c.getContext('2d');
+const W = 1080, H = 1920;
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const P = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, t) => a + (b - a) * t;
+const eOut = t => 1 - Math.pow(1 - t, 3);
+const eInOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const eBack = t => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const hash = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const EF = '"Noto Color Emoji"';
+const TF = '"Inter", "Noto Color Emoji", sans-serif';
+const money = v => '$' + Math.round(v).toLocaleString('en-US');
+
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+
+function emoji(ch, x, y, size, o = {}) {
+  const { rot = 0, sx = 1, sy = 1, alpha = 1, flip = false } = o;
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.translate(x, y); ctx.rotate(rot); ctx.scale(sx * (flip ? -1 : 1), sy);
+  ctx.font = `${size}px ${EF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#000'; // colour-emoji glyphs inherit fillStyle alpha, so keep it opaque
+  ctx.fillText(ch, 0, 0);
+  ctx.restore();
+}
+
+function wrap(text, maxW) {
+  const words = text.split(' '), lines = []; let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; } else cur = test;
+  }
+  lines.push(cur); return lines;
+}
+
+// Caption pill (drawn outside the camera transform)
+let caps = [];
+function drawCaption(text, y, p, { size = 72, bg = '#ffffff', fg = '#111111', maxW = 920 } = {}) {
+  if (p <= 0) return;
+  const s = eBack(p);
+  ctx.save();
+  ctx.font = `900 ${size}px ${TF}`;
+  const lines = wrap(text, maxW - 90);
+  const lh = size * 1.2;
+  const bw = Math.max(...lines.map(l => ctx.measureText(l).width)) + 90, bh = lines.length * lh + 50;
+  ctx.translate(W / 2, y); ctx.scale(s, s); ctx.globalAlpha = clamp(p * 3);
+  ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 40; ctx.shadowOffsetY = 12;
+  ctx.fillStyle = bg; rr(-bw / 2, -bh / 2, bw, bh, 40); ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.fillStyle = fg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  lines.forEach((l, i) => ctx.fillText(l, 0, -bh / 2 + 25 + lh * (i + .5) + 3));
+  ctx.restore();
+}
+const cap = (text, y, p, o) => caps.push([text, y, p, o]);
+
+function bubble(text, x, y, p) {
+  if (p <= 0) return;
+  const s = eBack(p);
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.font = `800 54px ${TF}`;
+  const w = ctx.measureText(text).width + 70, h = 100;
+  ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = 25; ctx.shadowOffsetY = 8;
+  ctx.fillStyle = '#fff'; rr(-w / 2, -h / 2, w, h, 50); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-20, h / 2 - 4); ctx.lineTo(30, h / 2 + 40); ctx.lineTo(30, h / 2 - 4); ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.fillStyle = '#e0457b'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 0, 3);
+  ctx.restore();
+}
+
+// Emoji-head character with a simple body
+function person(x, y, size, face, shirt, o = {}) {
+  const { rot = 0, bob = 0, faceScale = 1, bow = false, faceRot = 0 } = o;
+  ctx.save(); ctx.translate(x, y + bob); ctx.rotate(rot);
+  const bw = size * 1.08, bh = size * 1.5;
+  const g = ctx.createLinearGradient(-bw / 2, 0, bw / 2, 0);
+  g.addColorStop(0, shade(shirt, -25)); g.addColorStop(.5, shirt); g.addColorStop(1, shade(shirt, -35));
+  ctx.fillStyle = g; rr(-bw / 2, size * 0.36, bw, bh, [size * .38, size * .38, 20, 20]); ctx.fill();
+  // neck shadow
+  ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.beginPath(); ctx.ellipse(0, size * 0.42, size * .3, size * .08, 0, 0, Math.PI * 2); ctx.fill();
+  emoji(face, 0, 0, size, { sx: faceScale, sy: faceScale, rot: faceRot });
+  if (bow) emoji('🎀', size * .34, -size * .42, size * .42, { rot: .35 });
+  ctx.restore();
+}
+function shade(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = clamp((n >> 16) + amt, 0, 255), g = clamp(((n >> 8) & 255) + amt, 0, 255), b = clamp((n & 255) + amt, 0, 255);
+  return `rgb(${r},${g},${b})`;
+}
+
+function bgGrad(c1, c2) {
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, c1); g.addColorStop(1, c2);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+
+function shop(theme) {
+  bgGrad(theme.b1, theme.b2);
+  for (let i = 0; i < 3; i++) {
+    const x = 180 + i * 360;
+    const rg = ctx.createRadialGradient(x, 0, 10, x, 300, 760);
+    rg.addColorStop(0, theme.spot); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+  }
+  [430, 830, 1230].forEach((sy, r) => {
+    for (let i = 0; i < 4; i++) emoji(theme.items[(i + r) % theme.items.length], 135 + i * 270, sy - 80, 140);
+    ctx.fillStyle = theme.shelf; ctx.fillRect(0, sy, W, 16);
+    ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(0, sy + 16, W, 34);
+  });
+}
+const BOUTIQUE = { b1: '#2a1709', b2: '#9a6634', spot: 'rgba(255,214,150,.38)', shelf: '#e8b968', items: ['👜', '👛', '👜', '💼'] };
+const MAKEUP = { b1: '#ffe1ec', b2: '#ff86b0', spot: 'rgba(255,255,255,.5)', shelf: '#ffffff', items: ['💄', '💅', '🧴', '💄'] };
+const SHOES = { b1: '#fbf4ea', b2: '#cdb595', spot: 'rgba(255,240,210,.55)', shelf: '#c9a25a', items: ['👠', '👡', '👢', '👠'] };
+
+function counter(y, c1, c2) {
+  const g = ctx.createLinearGradient(0, y, 0, H); g.addColorStop(0, c1); g.addColorStop(1, c2);
+  ctx.fillStyle = g; ctx.fillRect(0, y, W, H - y);
+  ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.fillRect(0, y, W, 6);
+}
+
+function terminal(x, y, s, approved, rot = -0.06) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 50; ctx.shadowOffsetY = 30;
+  const g = ctx.createLinearGradient(0, -300, 0, 300); g.addColorStop(0, '#45484f'); g.addColorStop(1, '#1f2126');
+  ctx.fillStyle = g; rr(-200, -300, 400, 600, 56); ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.fillStyle = approved ? '#2fd06a' : '#cfe1ff'; rr(-160, -260, 320, 250, 22); ctx.fill();
+  ctx.fillStyle = approved ? '#fff' : '#2a3a5a'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `900 ${approved ? 52 : 46}px ${TF}`;
+  ctx.fillText(approved ? 'APPROVED' : 'TAP CARD', 0, -150);
+  ctx.font = `900 ${approved ? 80 : 60}px ${TF}`;
+  ctx.fillText(approved ? '✓' : '))))', 0, -70);
+  const keys = ['#5a5d66', '#5a5d66', '#5a5d66'];
+  for (let r = 0; r < 4; r++) for (let k = 0; k < 3; k++) {
+    ctx.fillStyle = r === 3 ? ['#e04848', '#e8c33c', '#36c463'][k] : keys[k];
+    rr(-130 + k * 95, 30 + r * 62, 70, 44, 14); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function ripples(x, y, lt, at) {
+  for (let i = 0; i < 3; i++) {
+    const p = P(lt, at + i * 0.08, at + i * 0.08 + 0.6);
+    if (p <= 0 || p >= 1) continue;
+    ctx.save(); ctx.strokeStyle = `rgba(80,240,140,${1 - p})`; ctx.lineWidth = 14 * (1 - p) + 2;
+    ctx.beginPath(); ctx.arc(x, y, 60 + p * 420, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+  }
+}
+
+function priceTag(text, x, y, p) {
+  if (p <= 0) return;
+  const s = eBack(clamp(p));
+  ctx.save(); ctx.translate(x, y - eOut(p) * 30); ctx.scale(s, s); ctx.rotate(-0.06);
+  ctx.font = `900 170px ${TF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round'; ctx.lineWidth = 26; ctx.strokeStyle = '#fff'; ctx.strokeText(text, 0, 0);
+  ctx.fillStyle = '#ff2d55'; ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
+// ---------------- Scenes ----------------
+function s1(lt) {
+  shop(BOUTIQUE);
+  person(300, 1230, 330, lt < 2.2 ? '😐' : '😑', '#6b6f76', { bob: Math.sin(lt * 2.5) * 5 });
+  const begged = lt > 1.2;
+  const pop = begged ? 1 + 0.18 * Math.sin(P(lt, 1.2, 1.45) * Math.PI) : 1;
+  person(770, 1330, 290, begged ? '🥺' : '😊', '#f1e6d6', { bow: true, faceScale: pop, bob: Math.sin(lt * 3 + 1) * 6 });
+  emoji('👜', 770, 1640, 240, { rot: Math.sin(lt * 4) * 0.05 });
+  for (let i = 0; i < 4; i++) {
+    const tw = Math.max(0, Math.sin(lt * 5 + i * 1.7));
+    emoji('✨', 770 + Math.cos(i * 1.6) * 170, 1620 + Math.sin(i * 2.3) * 120, 60 * tw, { alpha: tw });
+  }
+  bubble(CONFIG.please, 800, 1000, P(lt, 1.4, 1.75));
+  cap(CONFIG.hook, 330, P(lt, 0.1, 0.45));
+}
+
+function s2(lt) {
+  ctx.save(); ctx.filter = 'blur(22px)'; shop(BOUTIQUE); ctx.restore();
+  ctx.fillStyle = 'rgba(30,15,5,.25)'; ctx.fillRect(0, 0, W, H);
+  const sighed = lt > 0.45;
+  const sq = sighed ? 1 + 0.08 * Math.sin(P(lt, .45, .8) * Math.PI) : 1;
+  const shake = sighed ? 0 : Math.sin(lt * 40) * 2;
+  person(540 + shake, 1000, 560, sighed ? '😮‍💨' : '😑', '#6b6f76', { faceScale: sq });
+  const pp = P(lt, 0.5, 1.25);
+  if (pp > 0) emoji('💨', lerp(760, 980, eOut(pp)), lerp(1080, 1180, pp), lerp(140, 260, pp), { alpha: 1 - pp });
+  cap(CONFIG.sigh, 330, P(lt, 0.1, 0.45));
+}
+
+function s3(lt) {
+  ctx.save(); ctx.filter = 'blur(18px)'; shop(BOUTIQUE); ctx.restore();
+  counter(1050, '#efe9e0', '#b9ab98');
+  const tap = 0.7, ok = lt > tap;
+  terminal(540, 1380, 1.05, ok);
+  ripples(540, 1180, lt, tap);
+  const yIn = lerp(-200, 1120, eOut(P(lt, 0, 0.6)));
+  const bounce = ok ? -40 * Math.sin(P(lt, tap, tap + 0.3) * Math.PI) : 0;
+  emoji('💳', 560, yIn + bounce, 320, { rot: lerp(-0.6, -0.1, eOut(P(lt, 0, 0.6))) });
+  priceTag('-' + money(CONFIG.prices[0]), 540, 700, P(lt, tap + 0.05, tap + 0.4));
+  cap(CONFIG.tap, 330, P(lt, 0.05, 0.4));
+}
+
+function shopTap(lt, theme, item, faceBefore, faceAfter, price, label, items2) {
+  shop(theme);
+  const tap = 0.75, ok = lt > tap;
+  person(290, 980, 250, ok ? '😩' : '😑', '#6b6f76', { bob: Math.sin(lt * 3) * 4 });
+  person(780, 1100, 280, ok ? faceAfter : faceBefore, '#f1e6d6', { bow: true, bob: Math.sin(lt * 4) * 6 });
+  items2.forEach(([e, dx, dy, s, r]) => emoji(e, 780 + dx, 1100 + dy + Math.sin(lt * 6) * 8, s, { rot: r }));
+  counter(1480, '#f7f3ee', '#cfc5b8');
+  terminal(330, 1700, 0.62, ok, 0.04);
+  const fy = lt < tap ? lerp(1260, 1430, eInOut(P(lt, 0.3, tap))) : lerp(1430, 1330, eOut(P(lt, tap, tap + 0.3)));
+  emoji('👇', 340, fy, 190, { alpha: P(lt, 0.15, 0.35) });
+  ripples(330, 1560, lt, tap);
+  priceTag('-' + money(price), 540, 700, P(lt, tap + 0.05, tap + 0.4));
+  cap(label, 330, P(lt, 0.05, 0.4));
+}
+const s4a = lt => shopTap(lt, MAKEUP, '🎨', '🤩', '😍', CONFIG.prices[1], CONFIG.makeup, [['🎨', -150, 120, 170, -0.3], ['💄', 160, 140, 130, 0.4]]);
+const s4b = lt => shopTap(lt, SHOES, '👠', '😙', '😘', CONFIG.prices[2], CONFIG.shoes, [['👠', -170, 110, 160, -0.2], ['👠', 165, 120, 160, 0.25]]);
+
+function s5(lt) {
+  // ceiling
+  bgGrad('#fbf8f4', '#e9e1d6');
+  for (let i = 0; i < 6; i++) { ctx.fillStyle = 'rgba(255,255,220,.9)'; ctx.beginPath(); ctx.ellipse(90 + i * 180, 120, 40, 12, 0, 0, 7); ctx.fill(); }
+  // storefronts (parallax)
+  const off = -lt * 70;
+  for (let i = -1; i < 4; i++) {
+    const x = i * 420 + off + 40;
+    ctx.fillStyle = '#18181b'; ctx.fillRect(x, 260, 400, 880);
+    const g = ctx.createLinearGradient(0, 400, 0, 1140); g.addColorStop(0, '#ffe2b8'); g.addColorStop(1, '#c48a54');
+    ctx.fillStyle = g; ctx.fillRect(x + 22, 400, 356, 720);
+    ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.beginPath(); ctx.moveTo(x + 60, 400); ctx.lineTo(x + 140, 400); ctx.lineTo(x + 40, 1120); ctx.lineTo(x + 22, 1120); ctx.fill();
+    ['👗', '👔', '👠'].forEach((e, k) => emoji(e, x + 100 + k * 100, 760 + (k % 2) * 60, 110));
+    ctx.fillStyle = '#f4ead8'; ctx.font = `600 70px "Liberation Serif", serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(CONFIG.stores[((i % 3) + 3) % 3], x + 200, 330);
+  }
+  // floor
+  const fg = ctx.createLinearGradient(0, 1140, 0, H); fg.addColorStop(0, '#e6ddd0'); fg.addColorStop(1, '#bfb2a1');
+  ctx.fillStyle = fg; ctx.fillRect(0, 1140, W, H - 1140);
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 3;
+  for (let i = -6; i <= 6; i++) { ctx.beginPath(); ctx.moveTo(540 + i * 60, 1140); ctx.lineTo(540 + i * 420, H); ctx.stroke(); }
+  // walkers
+  const sc = lerp(0.9, 1.08, lt / 2.2);
+  const step = Math.abs(Math.sin(lt * 7)) * -22, step2 = Math.abs(Math.sin(lt * 7 + 1.3)) * -22;
+  const hx = 340, hy = 1080 + lt * 30;
+  ctx.save(); ctx.translate(hx, hy); ctx.scale(sc, sc); ctx.translate(-hx, -hy);
+  const sw = Math.sin(lt * 7) * 0.12;
+  [[-190, 430, 200], [-120, 500, 180], [190, 430, 200], [125, 500, 180]].forEach(([dx, dy, s], k) =>
+    emoji('🛍️', hx + dx, hy + dy + step, s, { rot: (k % 2 ? -sw : sw) }));
+  person(hx, hy, 300, '😩', '#6b6f76', { bob: step, rot: Math.sin(lt * 7) * 0.03 });
+  ctx.restore();
+  const sx = 770, sy = 1150 + lt * 30;
+  ctx.save(); ctx.translate(sx, sy); ctx.scale(sc, sc); ctx.translate(-sx, -sy);
+  person(sx, sy, 270, '😌', '#f1e6d6', { bow: true, bob: step2, rot: Math.sin(lt * 7 + 1.3) * 0.04 });
+  emoji('👛', sx + 170, sy + 420 + step2, 120);
+  for (let i = 0; i < 3; i++) { const tw = Math.max(0, Math.sin(lt * 6 + i * 2)); emoji('✨', sx - 180 + i * 180, sy - 210 + (i % 2) * 40, 70 * tw, { alpha: tw }); }
+  ctx.restore();
+  cap(CONFIG.bank, 330, P(lt, 0.1, 0.45));
+  cap(CONFIG.her, 490, P(lt, 1.1, 1.45), { size: 62 });
+}
+
+function s6(lt) {
+  bgGrad('#060a20', '#182150');
+  // window + moon
+  ctx.fillStyle = '#26306a'; rr(120, 230, 420, 520, 24); ctx.fill();
+  const wg = ctx.createLinearGradient(0, 260, 0, 720); wg.addColorStop(0, '#0d1640'); wg.addColorStop(1, '#2a3d8a');
+  ctx.fillStyle = wg; rr(145, 255, 370, 470, 14); ctx.fill();
+  for (let i = 0; i < 18; i++) { const tw = .4 + .6 * Math.abs(Math.sin(lt * 2 + i)); ctx.fillStyle = `rgba(255,255,255,${tw})`; ctx.beginPath(); ctx.arc(160 + hash(i) * 340, 270 + hash(i + 50) * 430, 2 + hash(i + 9) * 3, 0, 7); ctx.fill(); }
+  emoji('🌙', 400, 380, 150);
+  ctx.fillStyle = '#26306a'; ctx.fillRect(325, 255, 12, 470);
+  // headboard
+  ctx.fillStyle = '#141b45'; rr(40, 960, 1000, 420, 40); ctx.fill();
+  ctx.fillStyle = '#26306a'; rr(30, 1260, 1020, 700, 30); ctx.fill();
+
+  const lean = eInOut(P(lt, 1.0, 1.4));
+  const herFace = lt < 1.0 ? '🙂' : lt < 1.35 ? '😏' : '😘';
+  const himFace = lt < 1.3 ? '🥱' : lt < 1.6 ? '😳' : '😍';
+  ctx.save(); ctx.filter = 'brightness(0.72) saturate(0.85)';
+  person(lerp(360, 470, lean), 1160, 270, herFace, '#e9e2f2', { bow: true, rot: lean * 0.16 });
+  person(lerp(730, 630, eInOut(P(lt, 1.3, 1.7))), 1130, 290, himFace, '#4a5070', { rot: -eInOut(P(lt, 1.3, 1.7)) * 0.12 });
+  ctx.restore();
+  // phone + glow
+  const ph = P(lt, 0.9, 1.3);
+  if (ph < 1) {
+    const g = ctx.createRadialGradient(370, 1250, 10, 370, 1200, 360);
+    g.addColorStop(0, `rgba(170,200,255,${.5 * (1 - ph)})`); g.addColorStop(1, 'rgba(170,200,255,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.fillRect(0, 800, W, 900); ctx.restore();
+    emoji('📱', 370, lerp(1390, 1600, eInOut(ph)), 140, { alpha: 1 - ph, rot: ph * 0.8 });
+  }
+  // blanket
+  const bg2 = ctx.createLinearGradient(0, 1430, 0, H); bg2.addColorStop(0, '#3b4ba3'); bg2.addColorStop(1, '#222c6b');
+  ctx.fillStyle = bg2; rr(10, 1430, 1060, 560, 60); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 8;
+  for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(80 + i * 260, 1470); ctx.quadraticCurveTo(150 + i * 260, 1700, 60 + i * 260, 1920); ctx.stroke(); }
+  // hearts
+  for (let i = 0; i < 14; i++) {
+    const st = 1.4 + hash(i) * 0.8, p = P(lt, st, st + 1.1);
+    if (p <= 0 || p >= 1) continue;
+    emoji(['❤️', '💕', '💖'][i % 3], 550 + (hash(i + 20) - .5) * 520 + Math.sin(p * 6 + i) * 30, lerp(1050, 450, eOut(p)), 70 + hash(i + 40) * 70, { alpha: 1 - p * p });
+  }
+  const kp = P(lt, 1.42, 1.75);
+  if (kp > 0) emoji('💋', 555, 980, 210 * eBack(kp), { alpha: 1 - P(lt, 2.0, 2.4), rot: -0.15 });
+  ctx.fillStyle = 'rgba(0,0,10,.18)'; ctx.fillRect(0, 0, W, H);
+  if (lt < 1.45) cap(CONFIG.night1, 330, P(lt, 0.1, 0.45), { bg: '#111633', fg: '#ffffff' });
+  else cap(CONFIG.night2, 330, P(lt, 1.45, 1.8), { bg: '#ff4f8b', fg: '#ffffff' });
+}
+
+function s7(lt) {
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, '#1a0b2e'); g.addColorStop(.55, '#4b136b'); g.addColorStop(1, '#c2346e');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 20; i++) {
+    const sp = 500 + hash(i) * 500, y = ((lt * sp + hash(i + 7) * (H + 300)) % (H + 300)) - 150;
+    emoji(i % 2 ? '💸' : '💵', hash(i + 3) * W, y, 80 + hash(i + 11) * 70, { rot: Math.sin(lt * 3 + i) * .5, alpha: .3 });
+  }
+  const p1 = P(lt, 0.05, 0.35), p2 = P(lt, 0.2, 0.55), p3 = P(lt, 0.5, 0.8);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (p1 > 0) { ctx.save(); ctx.translate(540, 700); ctx.scale(eBack(p1), eBack(p1)); ctx.font = `900 110px ${TF}`; ctx.fillStyle = '#fff'; ctx.fillText(CONFIG.ctaTop, 0, 0); ctx.restore(); }
+  if (p2 > 0) {
+    const pulse = 1 + 0.04 * Math.sin(lt * 9);
+    ctx.save(); ctx.translate(540, 900); ctx.scale(eBack(p2) * pulse, eBack(p2) * pulse); ctx.rotate(-0.04);
+    ctx.font = `900 250px ${TF}`;
+    const gg = ctx.createLinearGradient(0, -120, 0, 120); gg.addColorStop(0, '#fff3b0'); gg.addColorStop(.5, '#ffd34d'); gg.addColorStop(1, '#ff9d00');
+    ctx.lineJoin = 'round'; ctx.lineWidth = 30; ctx.strokeStyle = '#2a0b3d'; ctx.strokeText(`“${CONFIG.ctaWord}”`, 0, 0);
+    ctx.fillStyle = gg; ctx.fillText(`“${CONFIG.ctaWord}”`, 0, 0);
+    ctx.restore();
+  }
+  if (p3 > 0) {
+    ctx.save(); ctx.globalAlpha = p3; ctx.font = `800 64px ${TF}`; ctx.fillStyle = '#fff';
+    wrap(CONFIG.ctaSub, 900).forEach((l, i) => ctx.fillText(l, 540, 1110 + i * 80 - (1 - eOut(p3)) * 30));
+    ctx.restore();
+  }
+  // fake comment box with typing
+  const pb = P(lt, 0.55, 0.8);
+  if (pb > 0) {
+    ctx.save(); ctx.globalAlpha = pb; ctx.translate(0, (1 - eOut(pb)) * 60);
+    ctx.fillStyle = 'rgba(255,255,255,.95)'; rr(110, 1330, 860, 120, 60); ctx.fill();
+    emoji('🙂', 185, 1390, 64);
+    const n = Math.floor(clamp((lt - 0.8) / 0.12, 0, CONFIG.ctaWord.length));
+    const typed = CONFIG.ctaWord.slice(0, n);
+    ctx.font = `700 56px ${TF}`; ctx.textAlign = 'left';
+    ctx.fillStyle = typed ? '#111' : '#999'; ctx.fillText(typed || 'Add a comment…', 250, 1392);
+    if (Math.floor(lt * 4) % 2 === 0) { const w = typed ? ctx.measureText(typed).width : 0; ctx.fillStyle = '#3897f0'; ctx.fillRect(254 + w, 1360, 5, 64); }
+    ctx.fillStyle = n === CONFIG.ctaWord.length ? '#3897f0' : '#b5d6fa'; ctx.font = `800 50px ${TF}`; ctx.textAlign = 'right';
+    ctx.fillText('Post', 925, 1392);
+    ctx.restore();
+  }
+  emoji('👇', 540, 1580 + Math.abs(Math.sin(lt * 7)) * -30, 130, { alpha: P(lt, 1.2, 1.4) });
+}
+
+const SCENES = [
+  { a: 0.0, b: 3.0, f: s1 }, { a: 3.0, b: 4.3, f: s2 }, { a: 4.3, b: 6.0, f: s3 },
+  { a: 6.0, b: 7.3, f: s4a }, { a: 7.3, b: 8.6, f: s4b }, { a: 8.6, b: 10.8, f: s5 },
+  { a: 10.8, b: 13.2, f: s6 }, { a: 13.2, b: 99, f: s7 },
+];
+const TAPS = [5.0, 6.75, 8.05];
+
+function hud(t) {
+  if (t < TAPS[0] || t >= 10.8) return;
+  let v = 0, bump = 0;
+  TAPS.forEach((tt, i) => { const p = eOut(P(t, tt, tt + 0.45)); v += CONFIG.prices[i] * p; if (t >= tt) bump = Math.max(bump, 1 - P(t, tt, tt + 0.3)); });
+  const s = eBack(P(t, TAPS[0], TAPS[0] + 0.3)) * (1 + 0.12 * bump);
+  ctx.save(); ctx.translate(540, 160); ctx.scale(s, s);
+  ctx.font = `900 54px ${TF}`;
+  const a = '💸 TOTAL: ', b = money(v);
+  const wa = ctx.measureText(a).width, wb = ctx.measureText(b).width, w = wa + wb + 70;
+  ctx.fillStyle = 'rgba(15,15,20,.78)'; rr(-w / 2, -48, w, 96, 48); ctx.fill();
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff'; ctx.fillText(a, -w / 2 + 35, 3);
+  ctx.fillStyle = '#ff4d6d'; ctx.fillText(b, -w / 2 + 35 + wa, 3);
+  ctx.restore();
+}
+
+function render(t) {
+  const sc = SCENES.find(s => t >= s.a && t < s.b);
+  const lt = t - sc.a, d = Math.min(sc.b, 15) - sc.a;
+  caps = [];
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H); ctx.globalAlpha = 1; ctx.filter = 'none';
+  ctx.save();
+  const z = (1 + 0.07 * (1 - eOut(P(lt, 0, 0.3)))) * (1 + 0.035 * lt / d);
+  ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2);
+  sc.f(lt, d, t);
+  ctx.restore();
+  // vignette
+  const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.75);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.35)');
+  ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  caps.forEach(a => drawCaption(...a));
+  hud(t);
+  const fl = 1 - P(lt, 0, 0.13);
+  if (sc.a > 0 && fl > 0) { ctx.fillStyle = `rgba(255,255,255,${fl * 0.75})`; ctx.fillRect(0, 0, W, H); }
+}
+
+// Preview mode: open this file in a browser to watch the animation loop.
+window.__render = render;
+if (!location.search.includes('render')) {
+  const t0 = performance.now();
+  const loop = () => { render(((performance.now() - t0) / 1000) % 15); requestAnimationFrame(loop); };
+  document.fonts.ready.then(loop);
+}
+</script>
+</body>
+</html>
